@@ -15,6 +15,8 @@ import akshare as ak
 import pandas as pd
 import plotly.graph_objects as go
 import requests
+
+from chart_style import PAGE_CSS, apply_style
 try:
     from IPython.display import Markdown, display
     HAVE_IPY = True
@@ -28,7 +30,7 @@ except ImportError:                      # 命令行运行：没有 IPython 时�
         pass
 
 # ------------------ 参数：只需要改这里 ------------------
-CODES = "601799 002050 688017 000559 600580 688836"   # 一个或多个 6 位代码，逗号 / 空格分隔均可
+CODES = "000977 688825 600667 688256"   # 一个或多个 6 位代码，逗号 / 空格分隔均可
 SHOW_FLOAT = True                  # 股票是否同时显示十大流通股东
 ETF_MAX_STOCKS = None              # ETF 最多穿透多少只成份股（按权重从高到低）；None = 全部
 ETF_SHOW_TABLES = 10               # ETF 只展开权重前 N 只成份股的明细表，其余只进汇总和 CSV
@@ -133,21 +135,48 @@ def stock_holders(code: str, floating: bool):
 
 
 # -------------------------- ETF --------------------------
+def fund_hold_em(code: str, year: int) -> pd.DataFrame:
+    """天天基金持仓。akshare 自带的请求不带 UA，会被东方财富拦截（返回 404），这里自己请求再解析"""
+    r = requests.get("https://fundf10.eastmoney.com/FundArchivesDatas.aspx", timeout=15,
+                     headers={**UA, "Referer": "https://fundf10.eastmoney.com/"},
+                     params={"type": "jjcc", "code": code, "topline": "10000", "year": year, "month": "", "rt": "0.9"})
+    r.encoding = "utf-8"
+    m = re.search(r'content:"(.*?)",arryear', r.text, re.S)
+    if not m:
+        return pd.DataFrame()
+    content = m.group(1).replace('\\"', '"')
+    labels = re.findall(r"&nbsp;&nbsp;([^<>]*?股票投资明细)</label>", content)
+    tables = pd.read_html(StringIO(content), converters={"股票代码": str})
+    out = []
+    for label, t in zip(labels, tables):
+        t = t.rename(columns=lambda c: re.sub(r"\s+", "", str(c)))
+        pct = [c for c in t.columns if c.startswith("占净值")][0]
+        num = [c for c in t.columns if c.startswith("持股数")][0]
+        val = [c for c in t.columns if c.startswith("持仓市值")][0]
+        out.append(pd.DataFrame({
+            "股票代码": t["股票代码"], "股票名称": t["股票名称"],
+            "占净值比例": pd.to_numeric(t[pct].astype(str).str.rstrip("%"), errors="coerce"),
+            "持股数": pd.to_numeric(t[num].astype(str).str.replace(",", ""), errors="coerce"),
+            "持仓市值": pd.to_numeric(t[val].astype(str).str.replace(",", ""), errors="coerce"),
+            "季度": label}))
+    return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
+
+
 def etf_holdings(code: str):
     """ETF 最新一期【完整】持仓。
     季报只披露前十大，半年报 / 年报才披露全部持仓，所以取最近一个行数 > 10 的报告期；
     若都只有前十大，就退回最新一期。"""
     year = dt.date.today().year
-    frames = []
+    frames, err = [], None
     for y in (year, year - 1):
         try:
-            df = ak.fund_portfolio_hold_em(symbol=code, date=str(y))
+            df = fund_hold_em(code, y)
             if df is not None and len(df):
                 frames.append(df)
-        except Exception:                                        # noqa: BLE001
-            pass
+        except Exception as ex:                                  # noqa: BLE001
+            err = ex
     if not frames:
-        raise RuntimeError("未取到持仓数据")
+        raise RuntimeError("未取到持仓数据" + (f"（{type(err).__name__} {err}）" if err else ""))
     df = pd.concat(frames, ignore_index=True)
     sizes = df.groupby("季度").size()
     full = sizes[sizes > 10]
@@ -224,12 +253,15 @@ def emit(obj):
 
 def bar_chart(df: pd.DataFrame, label_col: str, value_col: str, title: str):
     d = df.iloc[::-1]                    # 第 1 名画在最上面
+    top = d[value_col].max()
     fig = go.Figure(go.Bar(
-        x=d[value_col], y=d[label_col].astype(str).str.slice(0, 22), orientation="h",
-        marker_color=BAR, text=d[value_col].map(lambda v: f"{v:.2f}%"), textposition="outside"))
-    fig.update_xaxes(range=[0, d[value_col].max() * 1.15])
-    fig.update_layout(title=title, template="plotly_white", height=60 + 34 * len(d),
-                      margin=dict(l=10, r=60, t=50, b=30), xaxis_title=value_col)
+        x=d[value_col], y=d[label_col].astype(str).str.slice(0, 26), orientation="h",
+        marker=dict(color=d[value_col], colorscale=[[0, "#c9d8f5"], [1, BAR]], cmin=0, cmax=top),
+        text=d[value_col].map(lambda v: f"{v:.2f}%"), textposition="outside", cliponaxis=False,
+        hovertemplate="%{y}<br>%{x:.2f}%<extra></extra>"))
+    apply_style(fig, title, 90 + 32 * len(d), margin=dict(l=10, r=70, t=60, b=30), bargap=0.35)
+    fig.update_xaxes(range=[0, top * 1.12], showgrid=True, gridcolor="#eef0f4", ticksuffix="%")
+    fig.update_yaxes(showgrid=False, automargin=True)
     if HAVE_IPY:
         fig.show()
     REPORT.append(f'<div class="chart">{fig.to_html(full_html=False, include_plotlyjs="cdn" if not any("plotly" in r for r in REPORT) else False)}</div>')
@@ -263,11 +295,7 @@ def common_holders(items):
     return out.sort_values(["出现股票数", "股东名称"], ascending=[False, True]).reset_index(drop=True)
 
 
-CSS = """body{font-family:-apple-system,"PingFang SC",sans-serif;margin:24px auto;max-width:1100px;padding:0 16px;color:#222}
-h1{margin-bottom:4px}h2{margin-top:44px;border-top:2px solid #3b6fd4;padding-top:14px}
-nav a{margin-right:14px}table{border-collapse:collapse;font-size:13px;margin:8px 0}
-td,th{border:1px solid #ddd;padding:4px 10px;text-align:left}th{background:#f3f6fc}
-.tbl{overflow-x:auto}.common{background:#fff8e6;border:1px solid #f0c36d;padding:6px 16px 12px;border-radius:6px}"""
+CSS = PAGE_CSS
 
 
 def write_report(codes, common: dict):
@@ -276,11 +304,12 @@ def write_report(codes, common: dict):
     for kind, tb in common.items():
         sec += f"<h3>{kind}：多只股票共同出现的股东</h3>"
         sec += (styled(tb).to_html() if len(tb) else "<p>没有相同股东。</p>")
-    page = (f'<!doctype html><meta charset="utf-8"><title>前十大股东</title><style>{CSS}</style>'
+    page = (f'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>前十大股东</title><style>{CSS}</style><div class="page">'
             f'<h1>前十大股东汇总</h1><p>生成时间 {dt.datetime.now():%Y-%m-%d %H:%M}</p><nav>{nav}</nav>'
             f'<div class="common"><h2 style="border:0;margin-top:10px">相同股东</h2>'
             f'<p>注：“香港中央结算有限公司”是沪深港通名义持有人，汇总了众多港资投资者，并非单一股东。</p>{sec}</div>'
-            + "".join(REPORT))
+            + "".join(REPORT) + "</div>")
     path = Path(REPORT_HTML).resolve()
     path.write_text(page, encoding="utf-8")
     print(f"\n已生成网页报告：{path}")

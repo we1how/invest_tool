@@ -11,6 +11,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from chart_style import apply_style
+
 # ------------------ 参数：只需要改这里 ------------------
 SYMBOL = "601799"   # 6 位股票代码，如 600519 / 000001 / 300750
 DAYS = 30           # 回看的自然日天数
@@ -159,12 +161,12 @@ def build_figure(code, daily, source, amount_est, est, main, ticks):
         titles.append("最近交易日：主动买入 / 主动卖出 累计（手）｜斜率 = 买卖速度")
 
     n = len(panels)
-    fig = make_subplots(rows=n, cols=1, vertical_spacing=0.055, subplot_titles=titles)
+    fig = make_subplots(rows=n, cols=1, vertical_spacing=0.07, subplot_titles=titles)
 
     def line(row, xs, ys, name, color, dash=None, markers=True, width=2):
         fig.add_scatter(x=xs, y=ys, name=name, mode="lines+markers" if markers else "lines",
                         line=dict(color=color, width=width, dash=dash),
-                        marker=dict(size=5), row=row, col=1)
+                        marker=dict(size=5, line=dict(width=1, color="white")), row=row, col=1)
 
     def zero(row):
         fig.add_hline(y=0, line_color=GREY, line_width=1, row=row, col=1)
@@ -213,9 +215,8 @@ def build_figure(code, daily, source, amount_est, est, main, ticks):
         fig.update_xaxes(nticks=10, row=r, col=1)
 
     fig.update_xaxes(type="category")
-    fig.update_layout(title=f"{code} 近 {DAYS} 天资金大小与快慢", height=300 * n,
-                      template="plotly_white", hovermode="x unified",
-                      legend=dict(orientation="h", y=-0.03))
+    apply_style(fig, f"{code} 近 {DAYS} 天资金大小与快慢", 300 * n + 60, hovermode="x unified")
+    fig.update_layout(legend=dict(y=1.0 + 0.02 / n * 3))
     return fig
 
 
@@ -255,4 +256,5 @@ def main(code: str = SYMBOL, days: int = DAYS):
     return daily, est, main_flow, ticks
 
 
-daily, est, main_flow, ticks = main()
+if __name__ == "__main__":
+    daily, est, main_flow, ticks = main()
