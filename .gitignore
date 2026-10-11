@@ -2,3 +2,8 @@ top10_holders.csv
 top10_holders.html
 __pycache__/
 .DS_Store
+event_window.html
+node_modules/
+platform/dist/
+.wrangler/
+platform/worker-configuration.d.ts

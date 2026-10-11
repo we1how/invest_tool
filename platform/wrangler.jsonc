@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "invest-tool",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-11",
+  "assets": {
+    // 静态页面由 Vite 构建；/api/* 一律先走 Worker
+    "run_worker_first": ["/api/*"]
+  },
+  "observability": {
+    "enabled": true,
+    "traces": { "enabled": true }
+  }
+}
