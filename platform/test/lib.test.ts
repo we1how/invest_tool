@@ -167,3 +167,49 @@ describe("universe", () => {
     expect(filterItems(items, { ...base, q: "大宗" }).map((i) => i.s)).toEqual(["XAU"]);
   });
 });
+
+describe("业务画像", () => {
+  it("主营构成：去掉合计、抵销和超过 100% 的内部交易", async () => {
+    const { parseBreakdown } = await import("../src/lib/universe");
+    const row = (rank: string, name: string, ratio: string, date = "2026-06-30") =>
+      ({ REPORTDATE: date, RANK: rank, PRODUCTNAME: name, RATIO: ratio });
+    expect(parseBreakdown([
+      row("1", "Uranium", "82.6"), row("2", "Fuel services", "17.2"), row("3", "WEC", "104.3"),
+      row("4", "Adjustments", "-104.3"), row("77", "Other", "0.19"), row("99", "Total", "100"),
+      row("1", "Old", "100", "2025-06-30"),
+    ], "PRODUCTNAME")).toEqual([["Uranium", 82.6], ["Fuel services", 17.2]]);
+    expect(parseBreakdown([row("1", "x", "--")], "PRODUCTNAME")).toEqual([]);
+  });
+
+  it("利润表：营收、利润率和主要支出", async () => {
+    const { parseIncome } = await import("../src/lib/universe");
+    const r = (name: string, amount: number, yoy: number | null = null, date = "2026-01-25 00:00:00") =>
+      ({ REPORT_DATE: date, ITEM_NAME: name, AMOUNT: amount, YOY_RATIO: yoy, CURRENCY_ABBR: "USD" });
+    const p = parseIncome([
+      r("营业收入", 1000, 65.2), r("主营收入", 1000), r("主营成本", 290), r("营业成本", 290), r("毛利", 710),
+      r("研发费用", 86), r("营销费用", 21), r("营业费用", 107), r("营业利润", 603), r("利息支出", -2),
+      r("所得税", 99), r("净利润", 556), r("归属于母公司股东净利润", 556), r("营业收入", 600, 10, "2025-01-26 00:00:00"),
+    ])!;
+    expect(p).toEqual({
+      fy: "2026-01-25", cur: "USD", rev: 1000, yoy: 65.2, gm: 71, op: 60.3, opLabel: "营业利润", net: 55.6,
+      cost: [["营业成本", 290], ["研发费用", 86], ["营销费用", 21]],
+    });
+  });
+
+  it("银行：没有营业利润时用税前利润", async () => {
+    const { parseIncome } = await import("../src/lib/universe");
+    const r = (name: string, amount: number) => ({ REPORT_DATE: "2025-12-31", ITEM_NAME: name, AMOUNT: amount, YOY_RATIO: null, CURRENCY_ABBR: "USD" });
+    const p = parseIncome([r("收入总额", 1824), r("利息支出合计", 979), r("贷款损失准备", 142), r("薪酬和福利", 545),
+      r("非利息支出合计", 956), r("持续经营税前利润", 726), r("净利润", 570)])!;
+    expect(p.opLabel).toBe("税前利润");
+    expect(p.op).toBeCloseTo(39.8, 1);
+    expect(p.cost).toEqual([["薪酬和福利", 545], ["贷款损失准备", 142]]);
+  });
+
+  it("地区与金额格式", async () => {
+    const { regionCn, fmtAmount } = await import("../src/lib/universe");
+    expect([regionCn("United States"), regionCn("Taiwan,China"), regionCn("Mars")]).toEqual(["美国", "中国台湾", "Mars"]);
+    expect([fmtAmount(2.1594e11), fmtAmount(3.48e9, "CAD"), fmtAmount(-1.4e8), fmtAmount(4e7)])
+      .toEqual(["$2159 亿", "CAD 34.8 亿", "-$1.4 亿", "$4,000 万"]);
+  });
+});

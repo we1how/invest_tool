@@ -1,17 +1,17 @@
-// 生成"标的索引"的数据快照：public/data/universe.json + public/data/intro.json
+// 生成"标的索引"的数据快照：public/data/universe.json、intro.json（中文简介）、profile.json（业务画像）
 //
 //   node scripts/build-universe.ts               # 增量：简介 / ETF 持仓用本地缓存，只补新的
 //   node scripts/build-universe.ts --etf-top=500 # ETF 持仓抓成交额前 N 只（默认 500）
 //   node scripts/build-universe.ts --refresh     # 忽略缓存全部重抓
 //
 // 必须在能访问币安的网络下运行（币安对美国等地区的 IP 返回 restricted location）。
-// 数据源：币安（标的清单、合约、bStocks）、东方财富（中文名、中文简介）、stockanalysis.com（ETF 持仓）。
+// 数据源：币安（标的清单、合约、bStocks）、东方财富（中文名、中文简介、主营构成、利润表）、stockanalysis.com（ETF 持仓）。
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
-import { INDUSTRY_CN, parseLeverage, trimIntro } from "../src/lib/universe.ts";
-import type { EtfInfo, UniverseFile, UniverseItem } from "../src/types.ts";
+import { INDUSTRY_CN, isCostItem, parseBreakdown, parseIncome, parseLeverage, trimIntro } from "../src/lib/universe.ts";
+import type { EtfInfo, Profile, UniverseFile, UniverseItem } from "../src/types.ts";
 
 setGlobalDispatcher(new EnvHttpProxyAgent());     // 走 HTTPS_PROXY / HTTP_PROXY
 
@@ -110,18 +110,45 @@ async function emList(): Promise<Map<string, EmRow>> {
   return new Map(rows.map((r) => [r.f12.replace("_", "."), r]));
 }
 
-// ---------------- 3. 东方财富 F10：中文简介 ----------------
-type F10 = { intro?: string; sub?: string; web?: string; at: string };
+// ---------------- 3. 东方财富 F10：中文简介 + 主营构成 + 利润表 ----------------
+const F10_VERSION = 2;           // 缓存结构变了就加 1，旧缓存会自动重抓
+type F10 = {
+  v: number; cn?: string; intro?: string; sub?: string; web?: string; at: string;
+  seg?: [string, number][]; reg?: [string, number][]; segAt?: string; inc?: Omit<Profile, "seg" | "reg" | "segAt"> | null;
+};
 const EM_SUFFIX: Record<number, string> = { 105: "O", 106: "N", 107: "A" };
 
-async function f10(code: string, market: number): Promise<F10> {
-  const full = `${code.replace(".", "_")}.${EM_SUFFIX[market] ?? "N"}`;
-  type Resp = { data?: { gszl?: Record<string, string>[] } };
-  const body = await getJson<Resp>(`https://emweb.eastmoney.com/pc_usf10/CompanyInfo/PageAjax?fullCode=${full}`,
-    "https://emweb.eastmoney.com/");
+async function f10(code: string, market?: number): Promise<F10> {
+  type Row = Record<string, string | number | null>;
+  type Resp = { data?: { gszl?: Record<string, string>[]; zygc_cp?: Row[]; zygc_dq?: Row[] } };
+  // 不知道交易所时依次试纳斯达克 / 纽交所 / 美交所
+  const suffixes = market && EM_SUFFIX[market] ? [EM_SUFFIX[market]] : ["O", "N", "A"];
+  let body: Resp = {}, full = "";
+  for (const sfx of suffixes) {
+    full = `${code.replace(".", "_")}.${sfx}`;
+    body = await getJson<Resp>(`https://emweb.eastmoney.com/pc_usf10/CompanyInfo/PageAjax?fullCode=${full}`,
+      "https://emweb.eastmoney.com/");
+    if (body.data?.gszl?.length) break;
+  }
+  if (!body.data?.gszl?.length) return { v: F10_VERSION, at: new Date().toISOString() };
   const g = body.data?.gszl?.[0] ?? {};
   const val = (k: string) => (g[k] && g[k] !== "--" ? g[k].trim() : undefined);
-  return { intro: trimIntro(val("COMPPROFILE")), sub: val("INDUSTRY"), web: val("WEBSITE"), at: new Date().toISOString() };
+  const seg = parseBreakdown(body.data?.zygc_cp, "PRODUCTNAME");
+  const reg = parseBreakdown(body.data?.zygc_dq, "REGIONNAME");
+  const segAt = [...(body.data?.zygc_cp ?? []), ...(body.data?.zygc_dq ?? [])].map((r) => String(r.REPORTDATE)).sort().at(-1);
+
+  // 最近一个财年的利润表（年报）
+  type IncResp = { result?: { data?: Row[] } | null };
+  const inc = await getJson<IncResp>(`https://datacenter.eastmoney.com/securities/api/data/v1/get?${new URLSearchParams({
+    reportName: "RPT_USF10_FN_INCOME", columns: "REPORT_DATE,ITEM_NAME,AMOUNT,YOY_RATIO,CURRENCY_ABBR",
+    filter: `(SECUCODE="${full}")(DATE_TYPE_CODE="001")`, pageNumber: "1", pageSize: "80",
+    sortTypes: "-1", sortColumns: "REPORT_DATE" })}`, "https://emweb.eastmoney.com/");
+  return {
+    v: F10_VERSION, ...(/[\u4e00-\u9fff]/.test(val("SECURITYSHORTNAME") ?? "") ? { cn: val("SECURITYSHORTNAME") } : {}),
+    intro: trimIntro(val("COMPPROFILE")), sub: val("INDUSTRY"), web: val("WEBSITE"), at: new Date().toISOString(),
+    ...(seg.length ? { seg } : {}), ...(reg.length ? { reg } : {}), ...(segAt ? { segAt: segAt.slice(0, 10) } : {}),
+    inc: parseIncome(inc.result?.data ?? []),
+  };
 }
 
 // ---------------- 4. stockanalysis：ETF 持仓与行业分布 ----------------
@@ -198,9 +225,20 @@ async function main(): Promise<void> {
     fs.mkdirSync(CACHE_DIR, { recursive: true });
     fs.writeFileSync(emFile, JSON.stringify([...em.values()]));
   } catch (ex) {
-    if (!fs.existsSync(emFile)) throw ex;
-    console.log(`  获取失败（${ex instanceof Error ? ex.message : ex}），改用上次缓存的列表`);
-    em = new Map((JSON.parse(fs.readFileSync(emFile, "utf8")) as EmRow[]).map((r) => [r.f12.replace("_", "."), r]));
+    const why = ex instanceof Error ? ex.message : String(ex);
+    if (fs.existsSync(emFile)) {
+      console.log(`  获取失败（${why}），改用上次缓存的列表`);
+      em = new Map((JSON.parse(fs.readFileSync(emFile, "utf8")) as EmRow[]).map((r) => [r.f12.replace("_", "."), r]));
+    } else {
+      console.log(`  获取失败（${why}），中文名改从公司资料和上一份快照里取`);
+      em = new Map();
+    }
+  }
+  // 上一份快照里的中文名，列表接口失败时兜底
+  const prevCn = new Map<string, string>();
+  const prevFile = path.join(OUT_DIR, "universe.json");
+  if (fs.existsSync(prevFile)) {
+    for (const it of (JSON.parse(fs.readFileSync(prevFile, "utf8")) as UniverseFile).items) if (it.cn) prevCn.set(it.s, it.cn);
   }
 
   // 只收录正常的股票和 ETF（排除权利凭证、CVR 等带数字的代码）
@@ -215,6 +253,7 @@ async function main(): Promise<void> {
     const it: UniverseItem = { s: r.s, n: r.n, t: r.t === "STOCK" ? "S" : "E" };
     const cn = em.get(r.s)?.f14;
     if (cn && /[一-鿿]/.test(cn)) it.cn = cn;
+    else if (prevCn.has(r.s)) it.cn = prevCn.get(r.s);
     if (r.ssi) it.ind = INDUSTRY_CN[r.ssi] ?? r.ssi;
     const mc = Number(r.mc);
     if (mc > 0) it.mc = mc;
@@ -241,21 +280,29 @@ async function main(): Promise<void> {
     items.push({ s: f.baseAsset, n: CONTRACT_CN[f.baseAsset] ?? f.baseAsset, t: "C", ct: CONTRACT_TYPE_CN[f.underlyingType] ?? f.underlyingType, perp: 1 });
   }
 
-  console.log("3/4 东方财富 F10：中文简介（有缓存的跳过）");
+  console.log("3/4 东方财富 F10：中文简介、主营构成、利润表（有缓存的跳过）");
   const f10Cache = loadCache<F10>("em_f10.json");
-  const todo = items.filter((it) => it.t === "S" && em.has(it.s) && !f10Cache[it.s]);
+  const todo = items.filter((it) => it.t === "S" && f10Cache[it.s]?.v !== F10_VERSION);
   let failed = 0;
-  await pool(todo, 6, async (it) => {
-    try { f10Cache[it.s] = await f10(it.s, em.get(it.s)!.f13); } catch { failed++; }
+  await pool(todo, 4, async (it) => {
+    try { f10Cache[it.s] = await f10(it.s, em.get(it.s)?.f13); } catch { failed++; }
     if (Object.keys(f10Cache).length % 200 === 0) saveCache("em_f10.json", f10Cache);
   }, "简介");
   saveCache("em_f10.json", f10Cache);
   if (failed) console.log(`  ${failed} 只简介获取失败，下次运行会重试`);
   const intro: Record<string, string> = {};
+  const profile: Record<string, Profile> = {};
   for (const it of items) {
     const c = f10Cache[it.s];
     if (!c) continue;
     if (c.intro) intro[it.s] = c.intro;
+    if (!it.cn && c.cn) it.cn = c.cn;
+    if (c.inc || c.seg || c.reg) {
+      // 支出科目的筛选规则改过时，旧缓存也按新规则过滤一遍
+      const inc = c.inc ? { ...c.inc, ...(c.inc.cost ? { cost: c.inc.cost.filter(([n]) => isCostItem(n)) } : {}) } : null;
+      profile[it.s] = { ...(inc ?? { fy: "", cur: "USD" }), ...(c.seg ? { seg: c.seg } : {}), ...(c.reg ? { reg: c.reg } : {}),
+                        ...(c.segAt ? { segAt: c.segAt } : {}) };
+    }
     if (c.sub) it.sub = c.sub;
     if (c.web) it.web = c.web;
   }
@@ -283,14 +330,15 @@ async function main(): Promise<void> {
     stocks: items.filter((i) => i.t === "S").length, etfs: items.filter((i) => i.t === "E").length,
     contractOnly: items.filter((i) => i.t === "C").length, perp: items.filter((i) => i.perp).length,
     bStocks: items.filter((i) => i.bs).length, leveraged: items.filter((i) => i.lev).length,
-    withIntro: Object.keys(intro).length, withCn: items.filter((i) => i.cn).length, etfDetail: items.filter((i) => i.etf).length,
+    withIntro: Object.keys(intro).length, withProfile: Object.keys(profile).length, withCn: items.filter((i) => i.cn).length, etfDetail: items.filter((i) => i.etf).length,
   };
   const file: UniverseFile = { generatedAt: new Date().toISOString(), counts, items };
   fs.mkdirSync(OUT_DIR, { recursive: true });
   fs.writeFileSync(path.join(OUT_DIR, "universe.json"), JSON.stringify(file));
   fs.writeFileSync(path.join(OUT_DIR, "intro.json"), JSON.stringify(intro));
+  fs.writeFileSync(path.join(OUT_DIR, "profile.json"), JSON.stringify(profile));
   const size = (f: string) => `${(fs.statSync(path.join(OUT_DIR, f)).size / 1e6).toFixed(2)} MB`;
-  console.log("完成：", counts, `universe.json ${size("universe.json")}，intro.json ${size("intro.json")}`);
+  console.log("完成：", counts, `universe.json ${size("universe.json")}，intro.json ${size("intro.json")}，profile.json ${size("profile.json")}`);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

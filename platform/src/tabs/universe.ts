@@ -1,9 +1,9 @@
 // 标的索引：币安传统金融板块的全部标的（美股、ETF、仅合约），用来"事件反查"和建立大概印象
 import { errorText } from "../api";
 import {
-  filterItems, fmtUsd, levLabel, researchLinks, SECTOR_CN, type Query,
+  filterItems, fmtAmount, fmtUsd, levLabel, regionCn, researchLinks, SECTOR_CN, type Query,
 } from "../lib/universe";
-import type { UniverseFile, UniverseItem } from "../types";
+import type { Profile, UniverseFile, UniverseItem } from "../types";
 import { checkbox, el, field, fmt2, input, setQuery } from "../ui";
 
 const PAGE = 100;
@@ -37,6 +37,8 @@ export function mountUniverse(root: HTMLElement, q: URLSearchParams | null): voi
 
   let data: UniverseFile | null = null;
   let intro: Record<string, string> = {};
+  let profile: Record<string, Profile> = {};
+  let searchText: Record<string, string> = {};     // 简介 + 业务分部名称，用于关键词搜索
   let bySymbol = new Map<string, UniverseItem>();
   let related = new Map<string, { lev: UniverseItem[]; holders: [UniverseItem, number][] }>();
   let shown = PAGE;
@@ -54,7 +56,7 @@ export function mountUniverse(root: HTMLElement, q: URLSearchParams | null): voi
       q: qv.q.trim(), type: qv.type, ind: qv.ind, lev: qv.lev, perp: qv.perp ? "1" : "", bs: qv.bs ? "1" : "",
       sort: qv.sort === "mc" ? "" : qv.sort,
     }).filter(([, v]) => v)));
-    const results = filterItems(data.items, qv, intro);
+    const results = filterItems(data.items, qv, searchText);
     const when = new Date(data.generatedAt).toLocaleString("zh-CN", { hour12: false });
     status.textContent = `共 ${results.length.toLocaleString()} 个结果｜数据快照：${when}`
       + (qv.q.trim() && !introLoaded ? "｜简介还在加载，按关键词搜到的结果稍后会补全" : "");
@@ -120,7 +122,13 @@ export function mountUniverse(root: HTMLElement, q: URLSearchParams | null): voi
     if (facts.length) box.append(el("p", { class: "sub" }, facts.join("｜")));
 
     if (it.t === "S") {
-      box.append(el("p", {}, intro[it.s] ?? (introLoaded ? "暂无中文简介（数据源没有收录）。" : "简介加载中…")));
+      if (!introLoaded) box.append(el("p", { class: "sub" }, "业务资料加载中…"));
+      else {
+        const p = profile[it.s];
+        if (p) box.append(profileBlock(p));
+        box.append(el("p", { class: "label" }, "公司自述"),
+          el("p", { class: "intro" }, intro[it.s] ?? "暂无中文简介（数据源没有收录）。"));
+      }
       const rel = related.get(it.s);
       if (rel?.lev.length) {
         box.append(el("p", { class: "label" }, "跟踪它的 ETF（杠杆 / 反向 / 单股）"),
@@ -183,8 +191,13 @@ export function mountUniverse(root: HTMLElement, q: URLSearchParams | null): voi
       const saved = q?.get("ind");
       if (saved && counts.has(saved)) ind.value = saved;
       render();
-      const r2 = await fetch("/data/intro.json");
+      const [r2, r3] = await Promise.all([fetch("/data/intro.json"), fetch("/data/profile.json")]);
       if (r2.ok) intro = await r2.json() as Record<string, string>;
+      if (r3.ok) profile = await r3.json() as Record<string, Profile>;
+      searchText = { ...intro };
+      for (const [sym, p] of Object.entries(profile)) {
+        if (p.seg) searchText[sym] = `${searchText[sym] ?? ""} ${p.seg.map(([n]) => n).join(" ")}`;
+      }
       introLoaded = true;
       render();                                  // 简介到了之后，关键词搜索结果会更全
     } catch (ex) {
@@ -212,4 +225,40 @@ function buildRelated(items: UniverseItem[], bySymbol: Map<string, UniverseItem>
     r.holders.sort((a, b) => b[1] - a[1]);
   }
   return out;
+}
+
+// 东方财富的"营销费用"实际是销售及管理费用（SG&A）合计
+const COST_LABEL: Record<string, string> = { "营销费用": "销售及管理费用" };
+
+const pct = (v: number) => `${v > 0 && v < 1 ? v.toFixed(1) : Math.round(v)}%`;
+
+/** 业务画像：收入从哪来、钱花在哪、赚不赚钱（东方财富主营构成 + 最近财年利润表） */
+function profileBlock(p: Profile): HTMLElement {
+  const box = el("div", { class: "profile" });
+  const cur = p.cur || "USD";
+  if (p.rev !== undefined) {
+    const parts: (HTMLElement | string)[] = [`营收 ${fmtAmount(p.rev, cur)}`];
+    if (p.yoy !== undefined) parts.push(el("span", { class: p.yoy >= 0 ? "up" : "down" }, `（同比 ${p.yoy >= 0 ? "+" : ""}${p.yoy.toFixed(0)}%）`));
+    if (p.gm !== undefined) parts.push(`｜毛利率 ${pct(p.gm)}`);
+    if (p.op !== undefined) parts.push(`｜${p.opLabel ?? "营业利润"}率 `, el("span", { class: p.op >= 0 ? "" : "down" }, pct(p.op)));
+    if (p.net !== undefined) parts.push("｜净利率 ", el("span", { class: p.net >= 0 ? "" : "down" }, `${pct(p.net)}${p.net < 0 ? "（亏损）" : ""}`));
+    box.append(el("p", { class: "label" }, `赚不赚钱（财年截至 ${p.fy}）`), el("p", {}, ...parts));
+  }
+  if (p.seg?.length) {
+    box.append(el("p", { class: "label" }, `收入从哪来：按业务${p.segAt ? `（${p.segAt} 报告期）` : ""}`),
+      el("div", { class: "bars" }, ...p.seg.map(([n, w]) => el("div", { class: "bar" },
+        el("span", { class: "bar-name", title: n }, n),
+        el("span", { class: "bar-track" }, el("span", { class: "bar-fill", style: `width:${Math.min(100, w)}%` })),
+        el("span", { class: "bar-val" }, pct(w))))));
+  }
+  if (p.reg?.length) {
+    box.append(el("p", { class: "label" }, "收入从哪来：按地区"), el("p", {}, p.reg.map(([n, w]) => `${regionCn(n)} ${pct(w)}`).join(" · ")));
+  }
+  if (p.cost?.length) {
+    const total = p.cost.reduce((a, [, v]) => a + v, 0);
+    const relative = p.rev !== undefined && p.rev > 0 && total / p.rev <= 3;
+    box.append(el("p", { class: "label" }, relative ? "钱花在哪（占营收）" : "钱花在哪（营收很少或没有，按金额）"),
+      el("p", {}, p.cost.map(([n, v]) => `${COST_LABEL[n] ?? n} ${relative ? pct((v / p.rev!) * 100) : fmtAmount(v, cur)}`).join(" · ")));
+  }
+  return box;
 }

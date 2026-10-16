@@ -75,3 +75,19 @@ export interface UniverseFile {
   counts: Record<string, number>;
   items: UniverseItem[];
 }
+
+/** 业务画像（/data/profile.json，按代码索引）：来自东方财富的主营构成和最近一个财年的利润表 */
+export interface Profile {
+  fy: string;                    // 财年截止日，如 "2026-01-25"
+  cur: string;                   // 币种，如 USD / CAD
+  rev?: number;                  // 营收
+  yoy?: number;                  // 营收同比 %
+  gm?: number;                   // 毛利率 %
+  op?: number;                   // 营业利润率 %（银行等没有营业利润时为税前利润率）
+  opLabel?: string;              // "营业利润" / "税前利润"
+  net?: number;                  // 净利率 %
+  cost?: [string, number][];     // 主要支出项 [名称, 金额]
+  seg?: [string, number][];      // 收入按业务 [名称, 占比%]
+  reg?: [string, number][];      // 收入按地区 [名称, 占比%]
+  segAt?: string;                // 主营构成的报告期
+}

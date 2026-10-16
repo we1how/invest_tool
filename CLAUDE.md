@@ -22,3 +22,6 @@
 - 东方财富美股代码用下划线（BRK_B），币安用点（BRK.B）。
 - 杠杆 ETF 是按名称识别的（`parseLeverage`）：注意 "Ultra-Short Income" 这类是超短债不是做空，"T-REX" 里的 T 不是 AT&T。
 - 页面上的数据都是快照，`generatedAt` 显示在结果数旁边。
+- 业务画像来自东方财富 `pc_usf10/CompanyInfo/PageAjax` 的 `zygc_cp` / `zygc_dq`（主营构成）和 datacenter `RPT_USF10_FN_INCOME`（年报利润表，`DATE_TYPE_CODE=001`）。东方财富的"营销费用"实际是销售及管理费用（SG&A）合计。银行的"收入总额"已扣掉利息支出，所以利息支出不算进支出项；名字以"收入"结尾的科目（如"存贷款相关费用收入"）不是支出。
+- 东方财富的 push2 批量行情接口在部分代理节点下连不上（空响应），而公司资料和 datacenter 接口正常。脚本不依赖 push2：中文名从公司资料和上一份快照里兜底，交易所后缀按 O / N / A 逐个试。
+- 缓存（`platform/.cache/universe/em_f10.json`）带版本号 `F10_VERSION`，改了抓取的字段就把版本号加 1，旧缓存会自动重抓。

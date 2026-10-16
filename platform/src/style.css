@@ -89,8 +89,8 @@ table.uni .sub { color: var(--muted); font-size: 12px; }
 }
 .chip:hover { background: var(--accent); color: #fff; }
 .chip.plain { color: var(--ink); cursor: default; } .chip.plain:hover { background: #fff; color: var(--ink); }
-.bars { display: grid; gap: 4px; max-width: 520px; }
-.bar { display: grid; grid-template-columns: 9em 1fr 4.5em; align-items: center; gap: 8px; font-size: 12.5px; }
+.bars { display: grid; gap: 4px; max-width: 680px; }
+.bar { display: grid; grid-template-columns: minmax(7em, 18em) 1fr 4.5em; align-items: center; gap: 8px; font-size: 12.5px; }
 .bar-track { height: 8px; background: #eef0f4; border-radius: 4px; overflow: hidden; }
 .bar-fill { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
 .bar-val { text-align: right; font-variant-numeric: tabular-nums; }
@@ -103,3 +103,8 @@ button.more { display: block; margin: 12px auto; font-size: 14px; }
   form.card .field:not(.grow) { flex: 1 1 40%; }
   form.card .field select { width: 100%; }
 }
+.profile { border-left: 3px solid var(--accent); padding: 2px 0 4px 12px; margin: 4px 0 10px; }
+.profile .label:first-child { margin-top: 2px; }
+.profile .up { color: var(--up); } .profile .down { color: var(--down); }
+.detail-box p.intro { color: var(--muted); font-size: 13px; }
+.bar-name { line-height: 1.3; }

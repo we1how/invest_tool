@@ -1,4 +1,5 @@
 // 标的索引用到的纯函数：行业翻译、杠杆 ETF 识别、简介裁剪、研究链接。构建脚本和页面共用。
+import type { Profile } from "../types";
 
 /** 币安行业分类 -> 中文 */
 export const INDUSTRY_CN: Record<string, string> = {
@@ -173,4 +174,89 @@ export function filterItems<T extends Filterable>(items: T[], query: Query, intr
   const key = (it: T) => (query.sort === "mc" ? it.mc ?? 0 : query.sort === "to" ? it.to ?? 0 : 0);
   scored.sort((a, b) => a[1] - b[1] || (query.sort === "s" ? a[0].s.localeCompare(b[0].s) : key(b[0]) - key(a[0])));
   return scored.map(([it]) => it);
+}
+
+// ---------------- 业务画像 ----------------
+type EmRow = Record<string, string | number | null>;
+
+const SKIP_SEGMENT = /^(total|adjustments?|eliminations?|intersegment.*|corporate.*|reconcil.*|unallocated.*)$/i;
+
+/** 东方财富主营构成（按产品或地区）-> 前 limit 项 [名称, 占比%]，去掉合计、抵销、内部交易等 */
+export function parseBreakdown(rows: EmRow[] | undefined, nameKey: "PRODUCTNAME" | "REGIONNAME", limit = 6): [string, number][] {
+  if (!rows?.length) return [];
+  const latest = rows.map((r) => String(r.REPORTDATE)).sort().at(-1);
+  return rows
+    .filter((r) => String(r.REPORTDATE) === latest && String(r.RANK) !== "99")
+    .map((r): [string, number] => [String(r[nameKey] ?? "").trim(), Number(r.RATIO)])
+    .filter(([n, w]) => n && !SKIP_SEGMENT.test(n) && Number.isFinite(w) && w > 0.5 && w <= 100.5)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit);
+}
+
+// 支出类科目：名称里有成本 / 费用 / 支出 / 准备 / 赔付 / 薪酬 / 折旧，但不是合计、利息、所得税
+const COST_ITEM = /成本|费用|支出|准备|赔付|薪酬|折旧/;
+const NOT_COST = /合计|^营业费用$|^主营成本$|利息支出|利息收入|所得税|收入$|^其他收入/;
+
+export const isCostItem = (name: string) => COST_ITEM.test(name) && !NOT_COST.test(name);
+
+/** 最近一个财年的利润表（东方财富 RPT_USF10_FN_INCOME，年报行）-> 业务画像的财务部分 */
+export function parseIncome(rows: EmRow[]): Omit<Profile, "seg" | "reg" | "segAt"> | null {
+  if (!rows.length) return null;
+  const latest = rows.map((r) => String(r.REPORT_DATE)).sort().at(-1)!;
+  const items = rows.filter((r) => String(r.REPORT_DATE) === latest);
+  const item = (...names: string[]) => {
+    for (const n of names) {
+      const r = items.find((x) => x.ITEM_NAME === n);
+      if (r && typeof r.AMOUNT === "number") return r;
+    }
+    return undefined;
+  };
+  const revRow = item("营业收入", "收入总额", "主营收入", "营业总收入");
+  const rev = revRow?.AMOUNT as number | undefined;
+  const pct = (v: unknown) => (rev && rev > 0 && typeof v === "number" ? (v / rev) * 100 : undefined);
+  const gross = item("毛利")?.AMOUNT;
+  const opRow = item("营业利润");
+  const preTax = item("持续经营税前利润")?.AMOUNT;
+  const net = item("归属于母公司股东净利润", "净利润")?.AMOUNT;
+  const cost = items
+    .filter((r) => typeof r.AMOUNT === "number" && (r.AMOUNT as number) > 0 && isCostItem(String(r.ITEM_NAME)))
+    .map((r): [string, number] => [String(r.ITEM_NAME), r.AMOUNT as number])
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6);
+  const round = (v: number | undefined) => (v === undefined || !Number.isFinite(v) ? undefined : Math.round(v * 10) / 10);
+  const out: Omit<Profile, "seg" | "reg" | "segAt"> = {
+    fy: latest.slice(0, 10),
+    cur: String(revRow?.CURRENCY_ABBR ?? items[0]?.CURRENCY_ABBR ?? "USD"),
+    rev, yoy: round(Number(revRow?.YOY_RATIO ?? NaN)), gm: round(pct(gross)),
+    op: round(pct(opRow ? opRow.AMOUNT : preTax)), opLabel: opRow ? "营业利润" : "税前利润",
+    net: round(pct(net)), cost,
+  };
+  for (const k of Object.keys(out) as (keyof typeof out)[]) {
+    const v = out[k];
+    if (v === undefined || (Array.isArray(v) && !v.length)) delete out[k];
+  }
+  return out;
+}
+
+const REGION_CN: Record<string, string> = {
+  "united states": "美国", "us": "美国", "u.s.": "美国", "usa": "美国", "domestic": "本土", "international": "海外",
+  "foreign": "海外", "americas": "美洲", "north america": "北美", "latin america": "拉美", "south america": "南美",
+  "europe": "欧洲", "emea": "欧洲中东非洲", "europe, middle east & africa": "欧洲中东非洲",
+  "europe, middle east and africa": "欧洲中东非洲", "asia": "亚洲", "asia pacific": "亚太", "apac": "亚太",
+  "china": "中国", "taiwan,china": "中国台湾", "taiwan": "中国台湾", "the mainland and hong kong of china": "中国大陆及香港",
+  "hong kong": "中国香港", "japan": "日本", "korea": "韩国", "south korea": "韩国", "singapore": "新加坡",
+  "india": "印度", "canada": "加拿大", "mexico": "墨西哥", "brazil": "巴西", "united kingdom": "英国", "uk": "英国",
+  "germany": "德国", "france": "法国", "netherlands": "荷兰", "switzerland": "瑞士", "ireland": "爱尔兰",
+  "australia": "澳大利亚", "israel": "以色列", "middle east": "中东", "africa": "非洲", "other": "其他",
+  "other countries": "其他国家", "rest of world": "其他地区", "rest of the world": "其他地区", "others": "其他",
+};
+export const regionCn = (name: string) => REGION_CN[name.trim().toLowerCase()] ?? name;
+
+/** 金额（任意币种）-> 简写：2159 亿 / 3.5 亿 / 4,000 万 */
+export function fmtAmount(v: number, cur = "USD"): string {
+  const sym = cur === "USD" ? "$" : `${cur} `;
+  const a = Math.abs(v), sign = v < 0 ? "-" : "";
+  if (a >= 1e8) return `${sign}${sym}${(a / 1e8).toFixed(a >= 1e10 ? 0 : 1)} 亿`;
+  if (a >= 1e4) return `${sign}${sym}${Math.round(a / 1e4).toLocaleString("en-US")} 万`;
+  return `${sign}${sym}${Math.round(a)}`;
 }
