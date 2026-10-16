@@ -3,7 +3,7 @@ import { errorText } from "../api";
 import {
   filterItems, fmtAmount, fmtUsd, levLabel, regionCn, researchLinks, SECTOR_CN, type Query,
 } from "../lib/universe";
-import type { Profile, UniverseFile, UniverseItem } from "../types";
+import type { Profile, Summary, UniverseFile, UniverseItem } from "../types";
 import { checkbox, el, field, fmt2, input, setQuery } from "../ui";
 
 const PAGE = 100;
@@ -38,6 +38,7 @@ export function mountUniverse(root: HTMLElement, q: URLSearchParams | null): voi
   let data: UniverseFile | null = null;
   let intro: Record<string, string> = {};
   let profile: Record<string, Profile> = {};
+  let summary: Record<string, Summary> = {};
   let searchText: Record<string, string> = {};     // 简介 + 业务分部名称，用于关键词搜索
   let bySymbol = new Map<string, UniverseItem>();
   let related = new Map<string, { lev: UniverseItem[]; holders: [UniverseItem, number][] }>();
@@ -124,8 +125,8 @@ export function mountUniverse(root: HTMLElement, q: URLSearchParams | null): voi
     if (it.t === "S") {
       if (!introLoaded) box.append(el("p", { class: "sub" }, "业务资料加载中…"));
       else {
-        const p = profile[it.s];
-        if (p) box.append(profileBlock(p));
+        const p = profile[it.s], sum = summary[it.s];
+        if (p || sum) box.append(profileBlock(p, sum));
         box.append(el("p", { class: "label" }, "公司自述"),
           el("p", { class: "intro" }, intro[it.s] ?? "暂无中文简介（数据源没有收录）。"));
       }
@@ -191,12 +192,15 @@ export function mountUniverse(root: HTMLElement, q: URLSearchParams | null): voi
       const saved = q?.get("ind");
       if (saved && counts.has(saved)) ind.value = saved;
       render();
-      const [r2, r3] = await Promise.all([fetch("/data/intro.json"), fetch("/data/profile.json")]);
+      const [r2, r3, r4] = await Promise.all(["intro", "profile", "summary"].map((f) => fetch(`/data/${f}.json`)));
       if (r2.ok) intro = await r2.json() as Record<string, string>;
       if (r3.ok) profile = await r3.json() as Record<string, Profile>;
-      searchText = { ...intro };
-      for (const [sym, p] of Object.entries(profile)) {
-        if (p.seg) searchText[sym] = `${searchText[sym] ?? ""} ${p.seg.map(([n]) => n).join(" ")}`;
+      if (r4.ok) summary = await r4.json() as Record<string, Summary>;
+      // 关键词搜索的范围：一句话概括 + 公司自述 + 业务分部名（中英文）
+      for (const it of data.items) {
+        const sum = summary[it.s], seg = profile[it.s]?.seg;
+        const text = [sum?.s, intro[it.s], seg?.map(([n]) => `${n} ${sum?.seg?.[n] ?? ""}`).join(" ")].filter(Boolean).join(" ");
+        if (text) searchText[it.s] = text;
       }
       introLoaded = true;
       render();                                  // 简介到了之后，关键词搜索结果会更全
@@ -227,14 +231,17 @@ function buildRelated(items: UniverseItem[], bySymbol: Map<string, UniverseItem>
   return out;
 }
 
-// 东方财富的"营销费用"实际是销售及管理费用（SG&A）合计
-const COST_LABEL: Record<string, string> = { "营销费用": "销售及管理费用" };
+/** 东方财富的"营销费用"：公司没有单独列管理费用时是销售及管理费用（SG&A）合计，否则只是销售费用 */
+const costLabel = (name: string, all: [string, number][]) =>
+  name !== "营销费用" ? name : all.some(([n]) => n === "一般及行政费用") ? "销售费用" : "销售及管理费用";
 
 const pct = (v: number) => `${v > 0 && v < 1 ? v.toFixed(1) : Math.round(v)}%`;
 
 /** 业务画像：收入从哪来、钱花在哪、赚不赚钱（东方财富主营构成 + 最近财年利润表） */
-function profileBlock(p: Profile): HTMLElement {
+function profileBlock(p: Profile | undefined, sum: Summary | undefined): HTMLElement {
   const box = el("div", { class: "profile" });
+  if (sum) box.append(el("p", { class: "lead" }, sum.s, el("span", { class: "ai" }, "AI 整理")));
+  if (!p) return box;
   const cur = p.cur || "USD";
   if (p.rev !== undefined) {
     const parts: (HTMLElement | string)[] = [`营收 ${fmtAmount(p.rev, cur)}`];
@@ -247,7 +254,8 @@ function profileBlock(p: Profile): HTMLElement {
   if (p.seg?.length) {
     box.append(el("p", { class: "label" }, `收入从哪来：按业务${p.segAt ? `（${p.segAt} 报告期）` : ""}`),
       el("div", { class: "bars" }, ...p.seg.map(([n, w]) => el("div", { class: "bar" },
-        el("span", { class: "bar-name", title: n }, n),
+        el("span", { class: "bar-name", title: n }, sum?.seg?.[n] ?? n,
+          sum?.seg?.[n] && sum.seg[n] !== n ? el("span", { class: "en" }, n) : null),
         el("span", { class: "bar-track" }, el("span", { class: "bar-fill", style: `width:${Math.min(100, w)}%` })),
         el("span", { class: "bar-val" }, pct(w))))));
   }
@@ -258,7 +266,7 @@ function profileBlock(p: Profile): HTMLElement {
     const total = p.cost.reduce((a, [, v]) => a + v, 0);
     const relative = p.rev !== undefined && p.rev > 0 && total / p.rev <= 3;
     box.append(el("p", { class: "label" }, relative ? "钱花在哪（占营收）" : "钱花在哪（营收很少或没有，按金额）"),
-      el("p", {}, p.cost.map(([n, v]) => `${COST_LABEL[n] ?? n} ${relative ? pct((v / p.rev!) * 100) : fmtAmount(v, cur)}`).join(" · ")));
+      el("p", {}, p.cost.map(([n, v]) => `${costLabel(n, p.cost!)} ${relative ? pct((v / p.rev!) * 100) : fmtAmount(v, cur)}`).join(" · ")));
   }
   return box;
 }

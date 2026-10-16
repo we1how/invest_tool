@@ -9,7 +9,8 @@
     "deploy": "npm run build && wrangler deploy",
     "test": "vitest run",
     "typecheck": "wrangler types && tsc -p tsconfig.app.json && tsc -p tsconfig.worker.json && tsc -p tsconfig.scripts.json",
-    "data": "node scripts/build-universe.ts"
+    "data": "node scripts/build-universe.ts",
+    "summarize": "node scripts/summarize.ts"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.63.1",

@@ -108,3 +108,6 @@ button.more { display: block; margin: 12px auto; font-size: 14px; }
 .profile .up { color: var(--up); } .profile .down { color: var(--down); }
 .detail-box p.intro { color: var(--muted); font-size: 13px; }
 .bar-name { line-height: 1.3; }
+.profile p.lead { font-size: 15px; line-height: 1.6; margin: 4px 0 8px; }
+.profile .ai { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; margin-left: 8px; white-space: nowrap; }
+.bar-name .en { display: block; font-size: 11px; color: var(--muted); }

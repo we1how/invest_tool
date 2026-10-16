@@ -51,6 +51,7 @@ npm run deploy
 ```
 
 - 中文简介有本地缓存（`platform/.cache/`），只补新上市的；ETF 持仓超过 30 天才重抓。
+- 每只美股的"一句话概括"由 `npm run summarize` 生成：通过本机的 `claude -p`（Haiku）根据业务画像和公司自述来写，消耗当前登录的 Claude 订阅额度。可随时中断，重跑会接着做；新上市的股票刷新数据后再跑一次即可补上。
 - `npm run data -- --etf-top=1000` 改抓持仓的 ETF 数量；`-- --refresh` 忽略缓存全部重抓。
 
 ## Python 脚本

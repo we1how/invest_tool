@@ -91,3 +91,9 @@ export interface Profile {
   reg?: [string, number][];      // 收入按地区 [名称, 占比%]
   segAt?: string;                // 主营构成的报告期
 }
+
+/** AI 整理的一句话业务概括（/data/summary.json，按代码索引） */
+export interface Summary {
+  s: string;                     // 一句话：卖什么、收入主要来自哪、赚不赚钱、钱花在哪
+  seg?: Record<string, string>;  // 业务分部英文名 -> 中文
+}
