@@ -1,6 +1,7 @@
 import "./style.css";
 import { mountEvent } from "./tabs/event";
 import { mountHolders } from "./tabs/holders";
+import { mountUniverse } from "./tabs/universe";
 import { mountVolume } from "./tabs/volume";
 import { el } from "./ui";
 
@@ -10,6 +11,7 @@ const TABS: { id: string; label: string; mount: Mount }[] = [
   { id: "holders", label: "十大股东", mount: mountHolders },
   { id: "volume", label: "资金量价", mount: mountVolume },
   { id: "event", label: "事件窗口", mount: mountEvent },
+  { id: "universe", label: "标的索引", mount: mountUniverse },
 ];
 
 const query = new URLSearchParams(location.search);

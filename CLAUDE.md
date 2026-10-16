@@ -13,3 +13,12 @@
 - **线上数据源连通性**只有部署后才能确认，用 `/api/health` 看。东方财富的 `push2his` 日线在海外时好时坏，所以日线顺序是 腾讯 → 新浪 → 东方财富。
 - akshare 的基金持仓请求不带 UA 会被拦，Python 版里用的是自己写的 `fund_hold_em`。
 - 本机没有 Chrome；要截图检查页面可以用 `~/Library/Caches/ms-playwright` 里的 Chromium 配 `playwright-core`。
+
+## 标的索引（`npm run data`）
+
+- 标的清单来自币安 App 内部接口 `bapi/equity/v1/public/equity/symbol/get-symbols-static`（及 `-dynamic` 的成交额），没有公开文档。币安对美国 IP 返回 restricted location，脚本必须在非美国节点下跑。
+- **合约代码和美股代码会撞名**：合约 CL 是 WTI 原油、BZ 是布伦特原油，而美股 CL 是高露洁、BZ 是 Kanzhun。合约只按 `underlyingType === "EQUITY"` 去对应美股。
+- 代币化现货用币安产品接口里的 `tags: ["bStocks"]` 识别，不要按"代码 + B"猜（BNB 会被误认成 BN）。
+- 东方财富美股代码用下划线（BRK_B），币安用点（BRK.B）。
+- 杠杆 ETF 是按名称识别的（`parseLeverage`）：注意 "Ultra-Short Income" 这类是超短债不是做空，"T-REX" 里的 T 不是 AT&T。
+- 页面上的数据都是快照，`generatedAt` 显示在结果数旁边。

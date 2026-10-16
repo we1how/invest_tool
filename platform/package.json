@@ -8,12 +8,14 @@
     "preview": "vite preview",
     "deploy": "npm run build && wrangler deploy",
     "test": "vitest run",
-    "typecheck": "wrangler types && tsc -p tsconfig.app.json && tsc -p tsconfig.worker.json"
+    "typecheck": "wrangler types && tsc -p tsconfig.app.json && tsc -p tsconfig.worker.json && tsc -p tsconfig.scripts.json",
+    "data": "node scripts/build-universe.ts"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.63.1",
     "@types/node": "^26.6.5",
     "typescript": "^7.0.2",
+    "undici": "^8.12.2",
     "vite": "^8.3.4",
     "vitest": "^5.0.3",
     "wrangler": "^4.149.0"

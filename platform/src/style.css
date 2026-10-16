@@ -70,3 +70,36 @@ footer { margin-top: 40px; font-size: 12px; color: var(--muted); }
   .tabs button { padding: 8px 10px; }
   .field.grow { flex-basis: 100%; }
 }
+
+/* 标的索引 */
+table.uni td { vertical-align: top; }
+table.uni tr.clickable { cursor: pointer; }
+table.uni tr.open { background: #f3f6fc; }
+table.uni tr.detail > td { background: #fbfcfe; white-space: normal; padding: 12px 14px 16px; }
+table.uni .sub { color: var(--muted); font-size: 12px; }
+.tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.tag { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: #eef2fb; color: #3a4a6b; white-space: nowrap; }
+.tag.up { background: #fde8e8; color: var(--up); } .tag.down { background: #e3f5ec; color: var(--down); }
+.detail-box p { margin: 6px 0; }
+.detail-box .label { margin-top: 12px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  font: inherit; font-size: 12.5px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line);
+  background: #fff; color: var(--accent); text-decoration: none; cursor: pointer; white-space: nowrap;
+}
+.chip:hover { background: var(--accent); color: #fff; }
+.chip.plain { color: var(--ink); cursor: default; } .chip.plain:hover { background: #fff; color: var(--ink); }
+.bars { display: grid; gap: 4px; max-width: 520px; }
+.bar { display: grid; grid-template-columns: 9em 1fr 4.5em; align-items: center; gap: 8px; font-size: 12.5px; }
+.bar-track { height: 8px; background: #eef0f4; border-radius: 4px; overflow: hidden; }
+.bar-fill { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+.bar-val { text-align: right; font-variant-numeric: tabular-nums; }
+button.more { display: block; margin: 12px auto; font-size: 14px; }
+.show-sm { display: none; }
+@media (max-width: 600px) {
+  .hide-sm { display: none; }
+  .show-sm { display: block; margin-top: 4px; }
+  .detail-box { max-width: calc(100vw - 60px); }
+  form.card .field:not(.grow) { flex: 1 1 40%; }
+  form.card .field select { width: 100%; }
+}

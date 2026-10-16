@@ -118,3 +118,52 @@ describe("volume", () => {
     expect(c.sell).toEqual([0, 5, 5, 5]);
   });
 });
+
+describe("universe", () => {
+  const stocks = new Set(["TSLA", "AAPL", "GME", "T", "NVDA", "COIN"]);
+  it("杠杆 ETF 识别", async () => {
+    const { parseLeverage } = await import("../src/lib/universe");
+    expect(parseLeverage("Direxion Daily TSLA Bull 2X Shares", stocks)).toEqual({ lev: 2, u: "TSLA" });
+    expect(parseLeverage("GraniteShares 2x Short COIN Daily ETF", stocks)).toEqual({ lev: -2, u: "COIN" });
+    expect(parseLeverage("T-REX 2X Long GME Daily Target ETF", stocks)).toEqual({ lev: 2, u: "GME" });
+    expect(parseLeverage("T-Rex 2X Long Apple Daily Target ETF", stocks)).toEqual({ lev: 2, u: "AAPL" });
+    expect(parseLeverage("ProShares UltraPro QQQ", stocks)).toEqual({ lev: 3 });
+    expect(parseLeverage("ProShares UltraShort QQQ", stocks)).toEqual({ lev: -2 });
+    expect(parseLeverage("ProShares Short S&P500", stocks)).toEqual({ lev: -1 });
+    expect(parseLeverage("Direxion Daily Semiconductor Bear 3X ETF", stocks)).toEqual({ lev: -3 });
+    // 不是杠杆
+    expect(parseLeverage("JPMorgan Ultra-Short Income ETF", stocks)).toBeNull();
+    expect(parseLeverage("iShares Ultra Short Duration Bond Active ETF", stocks)).toBeNull();
+    expect(parseLeverage("State Street Energy Select Sector SPDR ETF", stocks)).toBeNull();
+  });
+
+  it("简介裁剪 / 金额格式", async () => {
+    const { trimIntro, fmtUsd, levLabel } = await import("../src/lib/universe");
+    expect(trimIntro("  --  ")).toBeUndefined();
+    expect(trimIntro("短简介。")).toBe("短简介。");
+    expect(trimIntro("第一句很长很长。第二句也很长很长很长很长。", 12)).toBe("第一句很长很长。");
+    expect(trimIntro("没有句号的一段很长很长的文字", 6)).toBe("没有句号的一…");
+    expect([fmtUsd(1.164e12), fmtUsd(3.52e10), fmtUsd(5.6e8), fmtUsd(3.2e7), fmtUsd(undefined)])
+      .toEqual(["$1.16 万亿", "$352 亿", "$5.6 亿", "$3,200 万", "-"]);
+    expect([levLabel(3), levLabel(-1)]).toEqual(["3x 做多", "1x 做空"]);
+  });
+
+  it("搜索与筛选", async () => {
+    const { filterItems } = await import("../src/lib/universe");
+    const items = [
+      { s: "MU", n: "Micron Technology", cn: "美光科技", t: "S" as const, ind: "半导体", mc: 1e12, to: 5, perp: 1 as const },
+      { s: "MUU", n: "Direxion Daily MU Bull 2X", t: "E" as const, lev: 2, u: "MU", to: 9 },
+      { s: "CCJ", n: "Cameco Corp", cn: "卡梅科", t: "S" as const, ind: "能源", mc: 3e10, to: 1 },
+      { s: "XAU", n: "黄金", t: "C" as const, ct: "大宗商品", perp: 1 as const },
+    ];
+    const base = { q: "", type: "" as const, ind: "", lev: "" as const, perp: false, bs: false, sort: "mc" as const };
+    expect(filterItems(items, base).map((i) => i.s)).toEqual(["MU", "CCJ", "MUU", "XAU"]);
+    expect(filterItems(items, { ...base, q: "mu" }).map((i) => i.s)).toEqual(["MU", "MUU"]);
+    expect(filterItems(items, { ...base, q: "铀" }, { CCJ: "全球最大的铀生产商之一。" }).map((i) => i.s)).toEqual(["CCJ"]);
+    expect(filterItems(items, { ...base, q: "美光" }).map((i) => i.s)).toEqual(["MU"]);
+    expect(filterItems(items, { ...base, lev: "only" }).map((i) => i.s)).toEqual(["MUU"]);
+    expect(filterItems(items, { ...base, perp: true, sort: "s" }).map((i) => i.s)).toEqual(["MU", "XAU"]);
+    expect(filterItems(items, { ...base, type: "C" }).map((i) => i.s)).toEqual(["XAU"]);
+    expect(filterItems(items, { ...base, q: "大宗" }).map((i) => i.s)).toEqual(["XAU"]);
+  });
+});
